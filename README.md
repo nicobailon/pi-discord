@@ -35,18 +35,11 @@ Requires a bot token and application id from the Discord Developer Portal.
 
 ## Install
 
-This package is meant to live at:
-
-`/Users/nicobailon/.pi/agent/extensions/pi-discord`
-
-If you're working from this repo already, install dependencies:
-
 ```bash
-cd /Users/nicobailon/.pi/agent/extensions/pi-discord
-npm install
+pi install npm:pi-discord
 ```
 
-Then restart Pi so it discovers the extension entrypoint from `index.js`.
+Then restart Pi so it discovers the extension.
 
 ## Quick start
 
@@ -152,7 +145,7 @@ The easiest path is:
 
 That prompts for the bot token, application id, and a comma-separated guild allowlist, then writes the JSON config file at:
 
-`/Users/nicobailon/.pi/agent/pi-discord/config.json`
+`~/.pi/agent/pi-discord/config.json`
 
 You can also edit the config directly with:
 
@@ -170,7 +163,7 @@ Or re-sync slash commands manually with:
 
 The runtime config lives at:
 
-`/Users/nicobailon/.pi/agent/pi-discord/config.json`
+`~/.pi/agent/pi-discord/config.json`
 
 Current fields:
 
@@ -224,7 +217,7 @@ Inside Pi, the extension exposes:
 
 The package code stays in the extension directory. Mutable runtime state lives separately under:
 
-`/Users/nicobailon/.pi/agent/pi-discord`
+`~/.pi/agent/pi-discord`
 
 That workspace contains:
 
@@ -279,7 +272,7 @@ For outbound files, the bot session can use the `discord_upload` tool to post a 
 
 The daemon writes structured JSON log lines to:
 
-`/Users/nicobailon/.pi/agent/pi-discord/logs/daemon.log`
+`~/.pi/agent/pi-discord/logs/daemon.log`
 
 The current extension surfaces those logs with:
 
