@@ -1,7 +1,7 @@
 {
   "name": "pi-discord",
   "private": false,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "bin": {
     "pi-discord-daemon": "./bin/pi-discord-daemon.mjs"

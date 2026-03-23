@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import {
   Client,
   Events,
@@ -11,7 +12,7 @@ import { JournalStore } from "./journal.js";
 import { Logger } from "./logger.js";
 import { buildPromptText } from "./prompt-shaper.js";
 import { RouteQueueStore } from "./queue-store.js";
-import { DiscordRenderer } from "./renderer.js";
+import { DiscordRenderer, splitDiscordText } from "./renderer.js";
 import { RouteRegistry, createRouteManifest } from "./registry.js";
 import { makeRouteKey } from "./route-key.js";
 import { RouteSessionHost } from "./session-host.js";
@@ -62,6 +63,7 @@ export class PiDiscordDaemon {
     this.currentRuns = new Map();
     this.workerId = `daemon-${process.pid}`;
     this.heartbeat = undefined;
+    this.triggerInterval = undefined;
     this.stopping = false;
     this.status = {};
   }
@@ -87,6 +89,46 @@ export class PiDiscordDaemon {
         await this.writeStatus({ phase: "running" });
       });
     }, 15_000);
+    this.triggerInterval = setInterval(() => {
+      this.processTriggers().catch((err) =>
+        this.logger.error("trigger-poll-failed", { error: String(err) }),
+      );
+    }, 30_000);
+  }
+
+  async processTriggers() {
+    const triggersDir = path.join(this.paths.workspaceDir, "triggers");
+    if (!existsSync(triggersDir)) return;
+    const files = readdirSync(triggersDir).filter((f) => f.endsWith(".json"));
+    for (const file of files) {
+      const triggerPath = path.join(triggersDir, file);
+      try {
+        const trigger = JSON.parse(readFileSync(triggerPath, "utf8"));
+        unlinkSync(triggerPath);
+        const scope = this.resolveScope(trigger.guildId ?? null, trigger.channelId, null);
+        const route = await this.ensureRoute(scope);
+        await route.queue.enqueue({
+          source: {
+            kind: "trigger",
+            sourceId: file,
+            userId: "",
+            guildId: trigger.guildId ?? null,
+            channelId: trigger.channelId,
+            threadId: null,
+            trigger: "proactive",
+          },
+          payload: {
+            rawText: "",
+            promptText: trigger.prompt,
+            attachments: [],
+          },
+        });
+        await this.scheduleWork();
+      } catch (err) {
+        this.logger.error("trigger-process-failed", { file, error: String(err) });
+        try { unlinkSync(triggerPath); } catch {}
+      }
+    }
   }
 
   attachEventHandlers() {
@@ -355,13 +397,7 @@ export class PiDiscordDaemon {
       savedAttachments,
     });
 
-    const reply = await message.reply({
-      content: `Queued for <@${message.author.id}>`,
-      components: route.renderer.createStopRow(),
-      allowedMentions: { parse: [], repliedUser: false },
-    });
-    route.manifest.primaryMessageId = reply.id;
-    await this.registry.saveManifest(route.manifest);
+    route.manifest.primaryMessageId = undefined;
 
     await route.journal.append({
       kind: "inbound",
@@ -375,7 +411,7 @@ export class PiDiscordDaemon {
       attachments: savedAttachments,
     });
 
-    const item = await route.queue.enqueue({
+    await route.queue.enqueue({
       source: {
         kind: "message",
         sourceId: message.id,
@@ -391,7 +427,6 @@ export class PiDiscordDaemon {
         attachments: savedAttachments,
       },
     });
-    await route.renderer.renderQueued(item);
     await this.scheduleWork();
   }
 
@@ -516,7 +551,7 @@ export class PiDiscordDaemon {
       authorName: interaction.user.username,
     });
 
-    const item = await route.queue.enqueue({
+    await route.queue.enqueue({
       source: {
         kind: "interaction",
         sourceId: interaction.id,
@@ -532,7 +567,6 @@ export class PiDiscordDaemon {
         attachments: [],
       },
     });
-    await route.renderer.renderQueued(item);
     await this.scheduleWork();
   }
 
@@ -604,11 +638,11 @@ export class PiDiscordDaemon {
   async processQueueItem(route, leasedItem) {
     let heartbeat;
     let unsubscribe = () => undefined;
+    const isTrigger = leasedItem.source.kind === "trigger";
+    let assistantText = "";
 
     try {
       await route.queue.markRunning(leasedItem.id);
-      route.renderer.currentAssistantText = "";
-      await route.renderer.renderRunning(leasedItem);
       route.host.currentSourceId = leasedItem.source.sourceId;
       const session = await route.host.ensureSession();
       await this.registry.saveManifest(route.manifest);
@@ -620,7 +654,9 @@ export class PiDiscordDaemon {
       }, Math.max(1_000, Math.floor(this.config.queueLeaseMs / 3)));
 
       unsubscribe = session.subscribe((event) => {
-        route.renderer.handleSessionEvent(event);
+        if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+          assistantText += event.assistantMessageEvent.delta;
+        }
       });
 
       const modelSupportsImages = this.config.enableImageInput && (session.model?.input?.includes?.("image") ?? false);
@@ -639,14 +675,26 @@ export class PiDiscordDaemon {
       route.manifest.sessionFile = session.sessionFile;
       await this.registry.saveManifest(route.manifest);
       await route.queue.finish(leasedItem.id, "completed");
+
+      const shouldPost = assistantText.trim() && !(isTrigger && assistantText.includes("[NO_OUTREACH]"));
+      if (shouldPost) {
+        const channel = await route.renderer.getTargetChannel();
+        for (const chunk of splitDiscordText(assistantText)) {
+          await channel.send({ content: chunk, allowedMentions: { parse: [] } });
+        }
+      }
+
+      let journalKind = "assistant-final";
+      if (isTrigger) {
+        journalKind = assistantText.includes("[NO_OUTREACH]") ? "trigger-suppressed" : "trigger-sent";
+      }
       await route.journal.append({
-        kind: "assistant-final",
+        kind: journalKind,
         routeKey: route.manifest.routeKey,
         timestamp: Date.now(),
         sourceId: leasedItem.id,
-        text: route.renderer.currentAssistantText,
+        text: assistantText,
       });
-      await route.renderer.renderSuccess();
     } catch (error) {
       const text = String(error);
       const nextState = /abort/i.test(text) ? "cancelled" : "failed";
@@ -659,10 +707,14 @@ export class PiDiscordDaemon {
         sourceId: leasedItem.id,
         error: text,
       });
-      if (nextState === "cancelled") {
-        await route.renderer.renderCancelled("Run stopped.");
-      } else {
-        await route.renderer.renderFailure(text);
+      if (!isTrigger) {
+        const errorMsg = nextState === "cancelled"
+          ? "Run stopped."
+          : `Something went wrong. (${text.slice(0, 200)})`;
+        const channel = await route.renderer.getTargetChannel().catch(() => undefined);
+        if (channel) {
+          await channel.send({ content: errorMsg, allowedMentions: { parse: [] } }).catch(() => undefined);
+        }
       }
     } finally {
       route.host.currentSourceId = undefined;
@@ -721,6 +773,7 @@ export class PiDiscordDaemon {
   async stop() {
     this.stopping = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.triggerInterval) clearInterval(this.triggerInterval);
     for (const active of this.currentRuns.values()) {
       await active.abort().catch(() => undefined);
     }

@@ -27,7 +27,7 @@ function normalizeAttachment(value) {
 
 function normalizeSource(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  if ((value.kind !== "message" && value.kind !== "interaction")
+  if ((value.kind !== "message" && value.kind !== "interaction" && value.kind !== "trigger")
     || typeof value.sourceId !== "string"
     || typeof value.userId !== "string"
     || typeof value.channelId !== "string"

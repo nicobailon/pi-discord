@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-23
+
+Post-complete message delivery and trigger file polling for companion/proactive bots.
+
+- **Post-complete mode**: accumulate assistant response text silently, then post a single clean message instead of streaming edits. Avoids the permanent "(edited)" tag on every bot reply.
+- **Trigger file polling**: new `processTriggers()` method polls a `triggers/` directory every 30 seconds. Extensions can write JSON trigger files to enqueue proactive messages without touching the Discord API directly.
+- **Trigger source kind**: queue now accepts `"trigger"` as a valid source kind alongside `"message"` and `"interaction"`.
+- **Error feedback**: on LLM failure, post a brief error message to the channel instead of silently failing. Trigger failures are suppressed (no channel to post to).
+- **Journal differentiation**: trigger responses are journaled as `trigger-sent` or `trigger-suppressed` (for `[NO_OUTREACH]`) instead of `assistant-final`.
+
 ## [0.1.1] - 2026-03-13
 
 Documentation and cleanup.
