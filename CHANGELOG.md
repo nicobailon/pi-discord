@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-04-04
+
+- Compatibility update for pi `0.65.x`: migrate session host model registry initialization to `await ModelRegistry.create(...)` and bump `@mariozechner/pi-coding-agent` to `^0.65.0`.
+
 ## [0.2.4] - 2026-03-24
 
 - **Display names**: use `displayName` instead of `username` in Requester lines and journal entries. The agent now sees "nicopreme" instead of "cartjacked." — matching what Discord shows in the UI. Falls back through server nickname → global display name → username.
